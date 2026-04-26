@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  name      String?
+  receipts  Receipt[]
+  expenses  Expense[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Receipt {
+  id            String        @id @default(cuid())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchantName  String?
+  purchasedAt   DateTime?
+  imageUrl      String
+  status        ReceiptStatus @default(UPLOADED)
+  subtotalCents Int?
+  taxCents      Int?
+  totalCents    Int?
+  currency      String        @default("USD")
+  confidence    Float?
+  lineItems     LineItem[]
+  expenses      Expense[]
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([userId, purchasedAt])
+  @@index([merchantName])
+}
+
+model LineItem {
+  id          String   @id @default(cuid())
+  receiptId   String
+  receipt     Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  description String
+  quantity    Float?
+  unitCents   Int?
+  totalCents  Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Expense {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  receiptId   String?
+  receipt     Receipt?  @relation(fields: [receiptId], references: [id], onDelete: SetNull)
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  merchant    String
+  amountCents Int
+  currency    String    @default("USD")
+  spentAt      DateTime
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([userId, spentAt])
+  @@index([categoryId])
+}
+
+model Category {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  color     String?
+  expenses  Expense[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+enum ReceiptStatus {
+  UPLOADED
+  PROCESSING
+  NEEDS_REVIEW
+  APPROVED
+  FAILED
+}
