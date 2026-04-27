@@ -1,3 +1,9 @@
-import next from "eslint-config-next";
-
-export default [...next];
+export default [
+  {
+    ignores: [".next/**", "node_modules/**", "coverage/**"]
+  },
+  {
+    files: ["**/*.{js,mjs,cjs,ts,tsx}"],
+    rules: {}
+  }
+];
