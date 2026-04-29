@@ -26,6 +26,5 @@ export interface ReceiptRecord {
   purchasedAt: string;
   totalCents: number;
   items: ReceiptItem[];
-  rawOcrText: string;
   createdAt: string;
 }

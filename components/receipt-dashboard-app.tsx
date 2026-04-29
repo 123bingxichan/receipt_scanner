@@ -1,12 +1,7 @@
 "use client";
 
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import {
-  formatUsd,
-  generateMockExtraction,
-  generateMockExtractionFromFile,
-  receiptToCsv
-} from "@/lib/receipt-utils";
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { formatUsd, generateMockExtraction, receiptToCsv } from "@/lib/receipt-utils";
 import { ItemCategory, NecessityLevel, ReceiptItem, ReceiptRecord } from "@/lib/types";
 
 const STORAGE_KEY = "receipt-scan-v1";
@@ -28,11 +23,6 @@ export function ReceiptDashboardApp() {
   const [receipts, setReceipts] = useState<ReceiptRecord[]>([]);
   const [draft, setDraft] = useState<ReceiptRecord | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [lastImportedFile, setLastImportedFile] = useState("");
-  const [uploadMessage, setUploadMessage] = useState("");
-  const [isScanning, setIsScanning] = useState(false);
-  const uploadInputRef = useRef<HTMLInputElement>(null);
-  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(STORAGE_KEY);
@@ -95,43 +85,16 @@ export function ReceiptDashboardApp() {
     return all.filter(({ item }) => item.name.toLowerCase().includes(normalized));
   }, [receipts, searchTerm]);
 
-  async function onFileUpload(event: ChangeEvent<HTMLInputElement>) {
+  function onFileUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setIsScanning(true);
-    const extracted = await generateMockExtractionFromFile(file);
-    setLastImportedFile(file.name);
-    setUploadMessage(
-      "Receipt image loaded. This MVP uses mocked OCR extraction, so please review and edit before saving."
-    );
+    const extracted = generateMockExtraction(file.name);
     setDraft({
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       ...extracted
     });
-    setIsScanning(false);
     event.target.value = "";
-  }
-
-  function openUploadPicker() {
-    uploadInputRef.current?.click();
-  }
-
-  function openCameraCapture() {
-    cameraInputRef.current?.click();
-  }
-
-  function loadSampleReceipt() {
-    const extracted = generateMockExtraction("sample-grocery-receipt.jpg");
-    setLastImportedFile("sample-grocery-receipt.jpg");
-    setUploadMessage(
-      "Loaded sample receipt. You can edit merchant, items, costs, categories, and necessity before saving."
-    );
-    setDraft({
-      id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
-      ...extracted
-    });
   }
 
   function updateDraftItem(itemId: string, patch: Partial<ReceiptItem>) {
@@ -180,42 +143,16 @@ export function ReceiptDashboardApp() {
 
       <section className="panel">
         <h2>1) Upload receipt image</h2>
-        <p className="hint">
-          Use Upload for existing images, or Camera to take a new photo on mobile.
-          OCR is mocked in this MVP, so review/edit extracted rows before saving.
-        </p>
+        <p className="hint">Camera capture works on iOS Safari/Chrome. OCR is mocked in this MVP and requires manual review.</p>
         <div className="upload-row">
-          <button type="button" onClick={openUploadPicker}>
-            Upload receipt
-          </button>
-          <button type="button" onClick={openCameraCapture}>
-            Scan with camera
-          </button>
-          <button type="button" onClick={loadSampleReceipt}>
-            Load sample
-          </button>
+          <label className="button-like" htmlFor="receipt-upload">
+            Choose image
+          </label>
+          <input id="receipt-upload" type="file" accept="image/*" capture="environment" onChange={onFileUpload} />
           <button type="button" onClick={downloadCsv} disabled={receipts.length === 0}>
             Export CSV
           </button>
         </div>
-        {isScanning ? <p className="hint">Scanning receipt image now...</p> : null}
-        <input
-          ref={uploadInputRef}
-          type="file"
-          accept="image/*"
-          onChange={onFileUpload}
-          style={{ display: "none" }}
-        />
-        <input
-          ref={cameraInputRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          onChange={onFileUpload}
-          style={{ display: "none" }}
-        />
-        {lastImportedFile ? <p className="hint">Last loaded file: {lastImportedFile}</p> : null}
-        {uploadMessage ? <p className="hint">{uploadMessage}</p> : null}
       </section>
 
       {draft ? (
@@ -329,10 +266,6 @@ export function ReceiptDashboardApp() {
               Save receipt
             </button>
           </div>
-          <details style={{ marginTop: 12 }}>
-            <summary>View OCR output for this scan</summary>
-            <pre>{draft.rawOcrText}</pre>
-          </details>
         </section>
       ) : null}
 
@@ -426,26 +359,6 @@ export function ReceiptDashboardApp() {
             </tbody>
           </table>
         </div>
-      </section>
-
-      <section className="panel">
-        <h2>5) Saved receipts and OCR logs</h2>
-        <p className="hint">
-          Open a row to inspect the exact parsed output that was saved for each receipt scan.
-        </p>
-        {receipts.length === 0 ? (
-          <p className="hint">No receipts saved yet.</p>
-        ) : (
-          receipts.map((receipt) => (
-            <details key={receipt.id} style={{ marginTop: 10 }}>
-              <summary>
-                {receipt.merchant} · {new Date(receipt.purchasedAt).toLocaleString()} ·{" "}
-                {formatUsd(receipt.totalCents)}
-              </summary>
-              <pre>{receipt.rawOcrText}</pre>
-            </details>
-          ))
-        )}
       </section>
     </main>
   );
