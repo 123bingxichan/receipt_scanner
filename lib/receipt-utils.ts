@@ -67,6 +67,18 @@ export function formatUsd(cents: number): string {
 }
 
 export function generateMockExtraction(fileName: string): Omit<ReceiptRecord, "id" | "createdAt"> {
+  return generateMockExtractionFromSeed(fileName, fileName.length * 9973);
+}
+
+export async function generateMockExtractionFromFile(file: File): Promise<Omit<ReceiptRecord, "id" | "createdAt">> {
+  const fileSeed = await hashFile(file);
+  return generateMockExtractionFromSeed(file.name, fileSeed);
+}
+
+function generateMockExtractionFromSeed(
+  fileName: string,
+  seed: number
+): Omit<ReceiptRecord, "id" | "createdAt"> {
   const lowerFile = fileName.toLowerCase();
   const merchant = lowerFile.includes("costco")
     ? "Costco"
@@ -76,11 +88,11 @@ export function generateMockExtraction(fileName: string): Omit<ReceiptRecord, "i
         ? "Target"
         : "Local Grocery";
 
-  const itemCount = 4 + (fileName.length % 4);
+  const itemCount = 4 + (seed % 6);
   const picked = Array.from({ length: itemCount }).map((_, idx) => {
-    const sample = MOCK_ITEMS[(idx + fileName.length) % MOCK_ITEMS.length];
+    const sample = MOCK_ITEMS[(idx + (seed % MOCK_ITEMS.length)) % MOCK_ITEMS.length];
     const name = sample.name;
-    const lineTotalCents = sample.lineTotalCents + ((idx * 17) % 90);
+    const lineTotalCents = sample.lineTotalCents + ((idx * 17 + (seed % 97)) % 190);
     const item: ReceiptItem = {
       id: crypto.randomUUID(),
       name,
@@ -99,8 +111,23 @@ export function generateMockExtraction(fileName: string): Omit<ReceiptRecord, "i
     merchant,
     purchasedAt: new Date().toISOString(),
     items: picked,
-    totalCents
+    totalCents,
+    rawOcrText: picked
+      .map((item) => `${item.name} ${item.quantityText} ${(item.lineTotalCents / 100).toFixed(2)}`)
+      .join("\n")
   };
+}
+
+async function hashFile(file: File): Promise<number> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let hash = 2166136261;
+  for (const byte of bytes) {
+    hash ^= byte;
+    hash = Math.imul(hash, 16777619);
+  }
+  hash ^= file.name.length;
+  hash ^= file.size;
+  return Math.abs(hash >>> 0);
 }
 
 export function receiptToCsv(receipts: ReceiptRecord[]): string {
