@@ -1,216 +1,473 @@
 "use client";
 
-import { ChangeEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  formatUsd,
+  generateMockExtraction,
+  generateMockExtractionFromFile,
+  receiptToCsv
+} from "@/lib/receipt-utils";
+import { ItemCategory, NecessityLevel, ReceiptItem, ReceiptRecord } from "@/lib/types";
 
-interface ParsedItem {
-  description: string;
-  quantity: number | null;
-  unitPrice: number | null;
-  lineTotal: number | null;
-}
+const STORAGE_KEY = "receipt-scan-v1";
 
-interface OcrApiResponse {
-  fullText: string;
-  merchant: string | null;
-  purchasedAt: string | null;
-  items: ParsedItem[];
-}
+const CATEGORY_OPTIONS: ItemCategory[] = [
+  "produce",
+  "pantry",
+  "junk_food",
+  "household",
+  "protein",
+  "dairy",
+  "beverage",
+  "other"
+];
 
-interface SavedReceipt extends OcrApiResponse {
-  id: string;
-  createdAt: string;
-  rawText: string;
-}
+const NECESSITY_OPTIONS: NecessityLevel[] = ["necessary", "non_necessary", "unknown"];
 
 export function ReceiptDashboardApp() {
+  const [receipts, setReceipts] = useState<ReceiptRecord[]>([]);
+  const [draft, setDraft] = useState<ReceiptRecord | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [lastImportedFile, setLastImportedFile] = useState("");
+  const [uploadMessage, setUploadMessage] = useState("");
   const [isScanning, setIsScanning] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [lastFileName, setLastFileName] = useState("");
-  const [ocrResult, setOcrResult] = useState<OcrApiResponse | null>(null);
-  const [savedReceipts, setSavedReceipts] = useState<SavedReceipt[]>([]);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void loadReceipts();
+    const saved = window.localStorage.getItem(STORAGE_KEY);
+    if (!saved) return;
+    try {
+      const parsed = JSON.parse(saved) as ReceiptRecord[];
+      setReceipts(parsed);
+    } catch {
+      window.localStorage.removeItem(STORAGE_KEY);
+    }
   }, []);
 
-  async function loadReceipts() {
-    const response = await fetch("/api/receipts");
-    const data = await response.json();
-    setSavedReceipts(data.receipts ?? []);
-  }
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(receipts));
+  }, [receipts]);
+
+  const monthlyTotal = useMemo(
+    () => receipts.reduce((sum, receipt) => sum + receipt.totalCents, 0),
+    [receipts]
+  );
+
+  const spendByCategory = useMemo(() => {
+    const categoryMap = new Map<ItemCategory, number>();
+    receipts.forEach((receipt) => {
+      receipt.items.forEach((item) => {
+        categoryMap.set(item.category, (categoryMap.get(item.category) ?? 0) + item.lineTotalCents);
+      });
+    });
+    return Array.from(categoryMap.entries()).sort((a, b) => b[1] - a[1]);
+  }, [receipts]);
+
+  const spendByNecessity = useMemo(() => {
+    const counts: Record<NecessityLevel, number> = {
+      necessary: 0,
+      non_necessary: 0,
+      unknown: 0
+    };
+    receipts.forEach((receipt) => {
+      receipt.items.forEach((item) => {
+        counts[item.necessity] += item.lineTotalCents;
+      });
+    });
+    return counts;
+  }, [receipts]);
+
+  const merchantSpend = useMemo(() => {
+    const map = new Map<string, number>();
+    receipts.forEach((receipt) => {
+      map.set(receipt.merchant, (map.get(receipt.merchant) ?? 0) + receipt.totalCents);
+    });
+    return Array.from(map.entries()).sort((a, b) => b[1] - a[1]);
+  }, [receipts]);
+
+  const filteredItems = useMemo(() => {
+    const normalized = searchTerm.trim().toLowerCase();
+    const all = receipts.flatMap((receipt) =>
+      receipt.items.map((item) => ({ receipt, item }))
+    );
+    if (!normalized) return all;
+    return all.filter(({ item }) => item.name.toLowerCase().includes(normalized));
+  }, [receipts, searchTerm]);
 
   async function onFileUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-
-    setError("");
-    setIsScanning(true);
-    setLastFileName(file.name);
-
-    try {
-      const payload = new FormData();
-      payload.append("file", file);
-
-      const response = await fetch("/api/ocr", { method: "POST", body: payload });
-      const data = await response.json();
-
-      if (!response.ok) {
-        setOcrResult(null);
-        setError(String(data?.error ?? "OCR request failed"));
-      } else {
-        setOcrResult(data as OcrApiResponse);
-      }
-    } catch (scanError) {
-      setOcrResult(null);
-      setError(scanError instanceof Error ? scanError.message : "Unexpected scan error");
-    } finally {
-      setIsScanning(false);
-      event.target.value = "";
-    }
-  }
-
-  async function saveExtractedReceipt() {
-    if (!ocrResult) return;
-    setIsSaving(true);
-    setError("");
-
-    const response = await fetch("/api/receipts", {
+    // #region agent log
+    const c = typeof crypto !== "undefined" ? crypto : null;
+    fetch("http://127.0.0.1:7334/ingest/e882d7d4-43fb-44ee-aeac-72c167409c81", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "737ace" },
       body: JSON.stringify({
-        merchant: ocrResult.merchant,
-        purchasedAt: ocrResult.purchasedAt,
-        rawText: ocrResult.fullText,
-        items: ocrResult.items
+        sessionId: "737ace",
+        hypothesisId: "D",
+        location: "receipt-dashboard-app.tsx:onFileUpload",
+        message: "upload handler invoked",
+        data: {
+          fileName: file.name,
+          hasWindow: typeof window !== "undefined",
+          cryptoType: typeof crypto,
+          hasRandomUUID: typeof c?.randomUUID === "function",
+          cryptoConstructor: c?.constructor?.name ?? null
+        },
+        timestamp: Date.now()
       })
+    }).catch(() => {});
+    // #endregion
+    setIsScanning(true);
+    const extracted = await generateMockExtractionFromFile(file);
+    setLastImportedFile(file.name);
+    setUploadMessage(
+      "Receipt image loaded. This MVP uses mocked OCR extraction, so please review and edit before saving."
+    );
+    setDraft({
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      ...extracted
     });
-
-    const data = await response.json();
-    if (!response.ok) {
-      setError(String(data?.error ?? "Failed to save receipt"));
-      setIsSaving(false);
-      return;
-    }
-
-    setSavedReceipts((current) => [data.receipt as SavedReceipt, ...current]);
-    setIsSaving(false);
+    setIsScanning(false);
+    event.target.value = "";
   }
 
-  function exportOcrCsv() {
-    if (!ocrResult) return;
-    const rows = [
-      ["description", "quantity", "unit_price", "line_total"],
-      ...ocrResult.items.map((item) => [
-        item.description,
-        item.quantity?.toString() ?? "",
-        item.unitPrice?.toFixed(2) ?? "",
-        item.lineTotal?.toFixed(2) ?? ""
-      ])
-    ];
-    const csv = rows.map((row) => row.map(escapeCsv).join(",")).join("\n");
+  function openUploadPicker() {
+    uploadInputRef.current?.click();
+  }
+
+  function openCameraCapture() {
+    cameraInputRef.current?.click();
+  }
+
+  function loadSampleReceipt() {
+    const extracted = generateMockExtraction("sample-grocery-receipt.jpg");
+    setLastImportedFile("sample-grocery-receipt.jpg");
+    setUploadMessage(
+      "Loaded sample receipt. You can edit merchant, items, costs, categories, and necessity before saving."
+    );
+    setDraft({
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      ...extracted
+    });
+  }
+
+  function updateDraftItem(itemId: string, patch: Partial<ReceiptItem>) {
+    setDraft((current) => {
+      if (!current) return current;
+      const nextItems = current.items.map((item) =>
+        item.id === itemId ? { ...item, ...patch } : item
+      );
+      return {
+        ...current,
+        items: nextItems,
+        totalCents: nextItems.reduce((sum, item) => sum + item.lineTotalCents, 0)
+      };
+    });
+  }
+
+  function saveDraft() {
+    if (!draft) return;
+    setReceipts((current) => [draft, ...current]);
+    setDraft(null);
+  }
+
+  function downloadCsv() {
+    const csv = receiptToCsv(receipts);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = window.URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `receipt-items-${new Date().toISOString().slice(0, 10)}.csv`;
-    link.click();
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `receipt-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    anchor.click();
     window.URL.revokeObjectURL(url);
   }
 
   return (
     <main className="app-shell">
       <header className="hero-block">
-        <p className="eyebrow">Receipt Scanner</p>
-        <h1>Upload receipt → OCR extract → save purchased items.</h1>
+        <div>
+          <p className="eyebrow">Receipt Scan MVP</p>
+          <h1>Track ingredient costs and necessity spending.</h1>
+          <p className="lede">
+            Upload or capture receipt photos, correct line-item extraction, classify groceries,
+            and export data for future GPT cost-per-dish analysis.
+          </p>
+        </div>
       </header>
 
       <section className="panel">
-        <h2>1) Upload receipt</h2>
+        <h2>1) Upload receipt image</h2>
+        <p className="hint">
+          Use Upload for existing images, or Camera to take a new photo on mobile.
+          OCR is mocked in this MVP, so review/edit extracted rows before saving.
+        </p>
         <div className="upload-row">
-          <button type="button" onClick={() => uploadInputRef.current?.click()}>
-            Upload image
+          <button type="button" onClick={openUploadPicker}>
+            Upload receipt
           </button>
-          <button type="button" onClick={saveExtractedReceipt} disabled={!ocrResult || isSaving}>
-            {isSaving ? "Saving..." : "Save extracted items"}
+          <button type="button" onClick={openCameraCapture}>
+            Scan with camera
           </button>
-          <button type="button" onClick={exportOcrCsv} disabled={!ocrResult}>
+          <button type="button" onClick={loadSampleReceipt}>
+            Load sample
+          </button>
+          <button type="button" onClick={downloadCsv} disabled={receipts.length === 0}>
             Export CSV
           </button>
         </div>
-        <input ref={uploadInputRef} type="file" accept="image/*" onChange={onFileUpload} style={{ display: "none" }} />
-        {lastFileName ? <p className="hint">Last scanned file: {lastFileName}</p> : null}
-        {isScanning ? <p className="hint">Scanning in progress…</p> : null}
-        {error ? <p className="hint">Error: {error}</p> : null}
+        {isScanning ? <p className="hint">Scanning receipt image now...</p> : null}
+        <input
+          ref={uploadInputRef}
+          type="file"
+          accept="image/*"
+          onChange={onFileUpload}
+          style={{ display: "none" }}
+        />
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={onFileUpload}
+          style={{ display: "none" }}
+        />
+        {lastImportedFile ? <p className="hint">Last loaded file: {lastImportedFile}</p> : null}
+        {uploadMessage ? <p className="hint">{uploadMessage}</p> : null}
       </section>
 
-      <section className="panel">
-        <h2>2) OCR extracted data</h2>
-        {!ocrResult ? (
-          <p className="hint">Upload a receipt to extract item rows.</p>
-        ) : (
-          <>
-            <p className="hint">Merchant: {ocrResult.merchant ?? "Unknown"}</p>
-            <p className="hint">Purchased at: {ocrResult.purchasedAt ?? "Unknown"}</p>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Description</th><th>Qty</th><th>Unit Price</th><th>Line Total</th>
+      {draft ? (
+        <section className="panel">
+          <h2>2) Review extracted items</h2>
+          <div className="draft-meta">
+            <label>
+              Merchant
+              <input
+                value={draft.merchant}
+                onChange={(event) =>
+                  setDraft((current) => (current ? { ...current, merchant: event.target.value } : current))
+                }
+              />
+            </label>
+            <label>
+              Purchase time
+              <input
+                type="datetime-local"
+                value={draft.purchasedAt.slice(0, 16)}
+                onChange={(event) =>
+                  setDraft((current) =>
+                    current
+                      ? {
+                          ...current,
+                          purchasedAt: new Date(event.target.value).toISOString()
+                        }
+                      : current
+                  )
+                }
+              />
+            </label>
+          </div>
+
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th>Qty / Weight</th>
+                  <th>Cost (USD)</th>
+                  <th>Category</th>
+                  <th>Necessity</th>
+                </tr>
+              </thead>
+              <tbody>
+                {draft.items.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <input
+                        value={item.name}
+                        onChange={(event) => updateDraftItem(item.id, { name: event.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        value={item.quantityText}
+                        onChange={(event) => updateDraftItem(item.id, { quantityText: event.target.value })}
+                      />
+                    </td>
+                    <td>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={(item.lineTotalCents / 100).toFixed(2)}
+                        onChange={(event) =>
+                          updateDraftItem(item.id, {
+                            lineTotalCents: Math.round(Number(event.target.value || 0) * 100)
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <select
+                        value={item.category}
+                        onChange={(event) =>
+                          updateDraftItem(item.id, { category: event.target.value as ItemCategory })
+                        }
+                      >
+                        {CATEGORY_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td>
+                      <select
+                        value={item.necessity}
+                        onChange={(event) =>
+                          updateDraftItem(item.id, { necessity: event.target.value as NecessityLevel })
+                        }
+                      >
+                        {NECESSITY_OPTIONS.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {ocrResult.items.map((item, idx) => (
-                    <tr key={`${item.description}-${idx}`}>
-                      <td>{item.description}</td>
-                      <td>{item.quantity ?? ""}</td>
-                      <td>{item.unitPrice?.toFixed(2) ?? ""}</td>
-                      <td>{item.lineTotal?.toFixed(2) ?? ""}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <details style={{ marginTop: 12 }}>
-              <summary>View full OCR text</summary>
-              <pre>{ocrResult.fullText}</pre>
-            </details>
-          </>
-        )}
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="action-row">
+            <strong>Draft total: {formatUsd(draft.totalCents)}</strong>
+            <button type="button" onClick={saveDraft}>
+              Save receipt
+            </button>
+          </div>
+          <details style={{ marginTop: 12 }}>
+            <summary>View OCR output for this scan</summary>
+            <pre>{draft.rawOcrText}</pre>
+          </details>
+        </section>
+      ) : null}
+
+      <section className="panel">
+        <h2>3) Dashboard</h2>
+        <div className="kpis">
+          <article>
+            <h3>Total tracked spend</h3>
+            <p>{formatUsd(monthlyTotal)}</p>
+          </article>
+          <article>
+            <h3>Necessary items</h3>
+            <p>{formatUsd(spendByNecessity.necessary)}</p>
+          </article>
+          <article>
+            <h3>Non-necessary items</h3>
+            <p>{formatUsd(spendByNecessity.non_necessary)}</p>
+          </article>
+        </div>
+
+        <div className="grid-2">
+          <article>
+            <h3>Spend by category</h3>
+            <ul>
+              {spendByCategory.length > 0 ? (
+                spendByCategory.map(([category, cents]) => (
+                  <li key={category}>
+                    <span>{category}</span>
+                    <strong>{formatUsd(cents)}</strong>
+                  </li>
+                ))
+              ) : (
+                <li>No data yet.</li>
+              )}
+            </ul>
+          </article>
+          <article>
+            <h3>Merchant trends</h3>
+            <ul>
+              {merchantSpend.length > 0 ? (
+                merchantSpend.map(([merchant, cents]) => (
+                  <li key={merchant}>
+                    <span>{merchant}</span>
+                    <strong>{formatUsd(cents)}</strong>
+                  </li>
+                ))
+              ) : (
+                <li>No data yet.</li>
+              )}
+            </ul>
+          </article>
+        </div>
       </section>
 
       <section className="panel">
-        <h2>3) Saved extracted items (with date)</h2>
-        {savedReceipts.length === 0 ? <p className="hint">No saved receipts yet.</p> : null}
-        {savedReceipts.map((receipt) => (
-          <details key={receipt.id} style={{ marginTop: 10 }}>
-            <summary>
-              {receipt.merchant ?? "Unknown merchant"} · {receipt.purchasedAt ?? "Unknown date"} · saved {new Date(receipt.createdAt).toLocaleString()}
-            </summary>
-            <div className="table-wrap">
-              <table>
-                <thead><tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Line Total</th></tr></thead>
-                <tbody>
-                  {receipt.items.map((item, idx) => (
-                    <tr key={`${receipt.id}-${idx}`}>
-                      <td>{item.description}</td>
-                      <td>{item.quantity ?? ""}</td>
-                      <td>{item.unitPrice?.toFixed(2) ?? ""}</td>
-                      <td>{item.lineTotal?.toFixed(2) ?? ""}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </details>
-        ))}
+        <h2>4) Ingredient lookup</h2>
+        <input
+          placeholder="Search for onion, garlic, doritos..."
+          value={searchTerm}
+          onChange={(event) => setSearchTerm(event.target.value)}
+        />
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Merchant</th>
+                <th>Date</th>
+                <th>Category</th>
+                <th>Necessity</th>
+                <th>Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredItems.length > 0 ? (
+                filteredItems.map(({ receipt, item }) => (
+                  <tr key={`${receipt.id}-${item.id}`}>
+                    <td>{item.name}</td>
+                    <td>{receipt.merchant}</td>
+                    <td>{new Date(receipt.purchasedAt).toLocaleDateString()}</td>
+                    <td>{item.category}</td>
+                    <td>{item.necessity}</td>
+                    <td>{formatUsd(item.lineTotalCents)}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6}>No items match yet.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>5) Saved receipts and OCR logs</h2>
+        <p className="hint">
+          Open a row to inspect the exact parsed output that was saved for each receipt scan.
+        </p>
+        {receipts.length === 0 ? (
+          <p className="hint">No receipts saved yet.</p>
+        ) : (
+          receipts.map((receipt) => (
+            <details key={receipt.id} style={{ marginTop: 10 }}>
+              <summary>
+                {receipt.merchant} · {new Date(receipt.purchasedAt).toLocaleString()} ·{" "}
+                {formatUsd(receipt.totalCents)}
+              </summary>
+              <pre>{receipt.rawOcrText}</pre>
+            </details>
+          ))
+        )}
       </section>
     </main>
   );
-}
-
-function escapeCsv(value: string): string {
-  const escaped = value.replaceAll("\"", "\"\"");
-  return escaped.includes(",") || escaped.includes("\"") ? `"${escaped}"` : escaped;
 }

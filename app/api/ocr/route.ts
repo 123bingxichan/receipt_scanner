@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parseReceiptText } from "@/lib/ocr-parser";
+
+interface OcrLine {
+  text: string;
+}
+
+interface OcrResponse {
+  fullText: string;
+  lines: OcrLine[];
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,17 +24,13 @@ export async function POST(request: NextRequest) {
     ocrForm.append("OCREngine", "2");
     ocrForm.append("file", file);
 
-    const apiKey = process.env.OCR_SPACE_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "Missing OCR_SPACE_API_KEY in environment." },
-        { status: 500 }
-      );
-    }
+    const apiKey = process.env.OCR_SPACE_API_KEY ?? "helloworld";
 
     const response = await fetch("https://api.ocr.space/parse/image", {
       method: "POST",
-      headers: { apikey: apiKey },
+      headers: {
+        apikey: apiKey
+      },
       body: ocrForm,
       cache: "no-store"
     });
@@ -46,17 +50,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "OCR returned no text" }, { status: 422 });
     }
 
-    const parsed = parseReceiptText(fullText);
+    const lines: OcrLine[] = fullText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((text) => ({ text }));
 
-    return NextResponse.json({
+    const result: OcrResponse = {
       fullText,
-      merchant: parsed.merchant,
-      purchasedAt: parsed.purchasedAt,
-      items: parsed.items
-    });
+      lines
+    };
+
+    return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unexpected OCR error" },
+      {
+        error: error instanceof Error ? error.message : "Unexpected OCR error"
+      },
       { status: 500 }
     );
   }

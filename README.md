@@ -2,13 +2,15 @@
 
 A receipt scanner and personal finance tracker for capturing receipts, extracting purchase data, categorizing spending, and reviewing monthly trends.
 
-## Current Features
+## Current MVP (implemented)
 
 - Upload receipt images or capture from mobile camera.
-- Scan receipts with OCR.Space through a server API route.
-- Upload from desktop or scan with mobile camera.
-- View full OCR text plus detected line-by-line output.
-- Export OCR lines to CSV for downstream analysis.
+- Generate per-file mocked OCR extraction (deterministic by file content) for fast iteration.
+- Review and edit extracted merchant/date/line items before saving.
+- Track totals, category spend, necessity spend, and merchant trends.
+- Search saved ingredient line items.
+- Export receipt item data as CSV.
+- Inspect raw OCR output for each scan and for saved receipts.
 
 ## Run locally
 
@@ -28,10 +30,8 @@ npm test
 npm run build
 ```
 
-## Environment
+## Notes
 
-Create `.env.local` with your OCR key:
-
-```bash
-OCR_SPACE_API_KEY=your_key_here
-```
+- The OCR pipeline is currently **mocked** for MVP speed, but now varies by uploaded file.
+- Receipt data is persisted in browser `localStorage` in this MVP.
+- See `docs/ROADMAP.md` for server-side persistence and real OCR follow-ups.
