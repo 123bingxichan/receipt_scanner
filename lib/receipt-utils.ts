@@ -1,5 +1,46 @@
 import { ItemCategory, NecessityLevel, ReceiptItem, ReceiptRecord } from "@/lib/types";
 
+// #region agent log
+function debugLog(
+  hypothesisId: string,
+  location: string,
+  message: string,
+  data: Record<string, unknown>
+) {
+  fetch("http://127.0.0.1:7334/ingest/e882d7d4-43fb-44ee-aeac-72c167409c81", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "737ace" },
+    body: JSON.stringify({
+      sessionId: "737ace",
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now()
+    })
+  }).catch(() => {});
+}
+
+function cryptoDiagnostics() {
+  const c = typeof crypto !== "undefined" ? (crypto as Crypto & { randomUUID?: () => string }) : null;
+  return {
+    hasWindow: typeof window !== "undefined",
+    hasProcess: typeof process !== "undefined",
+    nodeVersion: typeof process !== "undefined" ? process.versions?.node : null,
+    cryptoType: typeof crypto,
+    cryptoConstructor: c?.constructor?.name ?? null,
+    hasRandomUUID: typeof c?.randomUUID === "function",
+    cryptoKeys: c ? Object.keys(c).slice(0, 12) : [],
+    isSecureContext:
+      typeof globalThis !== "undefined" &&
+      "isSecureContext" in globalThis &&
+      Boolean((globalThis as { isSecureContext?: boolean }).isSecureContext)
+  };
+}
+
+debugLog("B", "receipt-utils.ts:module", "module evaluated", cryptoDiagnostics());
+// #endregion
+
 const CATEGORY_KEYWORDS: Array<{ category: ItemCategory; keywords: string[] }> = [
   { category: "produce", keywords: ["onion", "garlic", "tomato", "lettuce", "spinach", "apple", "banana"] },
   { category: "pantry", keywords: ["rice", "flour", "soy sauce", "oil", "beans", "pasta", "salt", "sugar"] },
@@ -71,6 +112,13 @@ export function generateMockExtraction(fileName: string): Omit<ReceiptRecord, "i
 }
 
 export async function generateMockExtractionFromFile(file: File): Promise<Omit<ReceiptRecord, "id" | "createdAt">> {
+  // #region agent log
+  debugLog("C", "receipt-utils.ts:generateMockExtractionFromFile", "file upload extraction start", {
+    fileName: file.name,
+    fileSize: file.size,
+    ...cryptoDiagnostics()
+  });
+  // #endregion
   const fileSeed = await hashFile(file);
   return generateMockExtractionFromSeed(file.name, fileSeed);
 }
@@ -89,6 +137,14 @@ function generateMockExtractionFromSeed(
         : "Local Grocery";
 
   const itemCount = 4 + (seed % 6);
+  // #region agent log
+  debugLog("A", "receipt-utils.ts:generateMockExtractionFromSeed", "before randomUUID in map", {
+    fileName,
+    seed,
+    itemCount,
+    ...cryptoDiagnostics()
+  });
+  // #endregion
   const picked = Array.from({ length: itemCount }).map((_, idx) => {
     const sample = MOCK_ITEMS[(idx + (seed % MOCK_ITEMS.length)) % MOCK_ITEMS.length];
     const name = sample.name;

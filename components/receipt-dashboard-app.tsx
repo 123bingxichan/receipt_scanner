@@ -98,6 +98,27 @@ export function ReceiptDashboardApp() {
   async function onFileUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    // #region agent log
+    const c = typeof crypto !== "undefined" ? crypto : null;
+    fetch("http://127.0.0.1:7334/ingest/e882d7d4-43fb-44ee-aeac-72c167409c81", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "737ace" },
+      body: JSON.stringify({
+        sessionId: "737ace",
+        hypothesisId: "D",
+        location: "receipt-dashboard-app.tsx:onFileUpload",
+        message: "upload handler invoked",
+        data: {
+          fileName: file.name,
+          hasWindow: typeof window !== "undefined",
+          cryptoType: typeof crypto,
+          hasRandomUUID: typeof c?.randomUUID === "function",
+          cryptoConstructor: c?.constructor?.name ?? null
+        },
+        timestamp: Date.now()
+      })
+    }).catch(() => {});
+    // #endregion
     setIsScanning(true);
     const extracted = await generateMockExtractionFromFile(file);
     setLastImportedFile(file.name);
