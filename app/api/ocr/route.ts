@@ -24,13 +24,7 @@ export async function POST(request: NextRequest) {
     ocrForm.append("OCREngine", "2");
     ocrForm.append("file", file);
 
-    const apiKey = process.env.OCR_SPACE_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "Missing OCR_SPACE_API_KEY in environment." },
-        { status: 500 }
-      );
-    }
+    const apiKey = process.env.OCR_SPACE_API_KEY ?? "helloworld";
 
     const response = await fetch("https://api.ocr.space/parse/image", {
       method: "POST",
