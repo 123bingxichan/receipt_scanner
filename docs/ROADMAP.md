@@ -9,10 +9,10 @@
 
 ## Phase 2: Persistence
 
-- Configure PostgreSQL.
-- Run initial Prisma migration.
-- Add Prisma client helper.
-- Implement receipt create/list/detail flows.
+- [x] Configure PostgreSQL.
+- [x] Run initial Prisma migration.
+- [x] Add Prisma client helper.
+- [x] Implement receipt create/list/detail flows.
 
 ## Phase 3: Receipt Upload
 

@@ -1,15 +1,8 @@
 "use client";
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
-import {
-  formatUsd,
-  generateMockExtraction,
-  generateMockExtractionFromFile,
-  receiptToCsv
-} from "@/lib/receipt-utils";
+import { formatUsd, receiptToCsv } from "@/lib/receipt-utils";
 import { ItemCategory, NecessityLevel, ReceiptItem, ReceiptRecord } from "@/lib/types";
-
-const STORAGE_KEY = "receipt-scan-v1";
 
 const CATEGORY_OPTIONS: ItemCategory[] = [
   "produce",
@@ -35,19 +28,11 @@ export function ReceiptDashboardApp() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (!saved) return;
-    try {
-      const parsed = JSON.parse(saved) as ReceiptRecord[];
-      setReceipts(parsed);
-    } catch {
-      window.localStorage.removeItem(STORAGE_KEY);
-    }
+    fetch("/api/receipts?status=APPROVED")
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(`HTTP ${res.status}`))))
+      .then((data: { receipts: ReceiptRecord[] }) => setReceipts(data.receipts))
+      .catch(() => setUploadMessage("Could not load saved receipts. Is the database running?"));
   }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(receipts));
-  }, [receipts]);
 
   const monthlyTotal = useMemo(
     () => receipts.reduce((sum, receipt) => sum + receipt.totalCents, 0),
@@ -96,42 +81,26 @@ export function ReceiptDashboardApp() {
   }, [receipts, searchTerm]);
 
   async function onFileUpload(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+    const input = event.target;
+    const file = input.files?.[0];
     if (!file) return;
-    // #region agent log
-    const c = typeof crypto !== "undefined" ? crypto : null;
-    fetch("http://127.0.0.1:7334/ingest/e882d7d4-43fb-44ee-aeac-72c167409c81", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "737ace" },
-      body: JSON.stringify({
-        sessionId: "737ace",
-        hypothesisId: "D",
-        location: "receipt-dashboard-app.tsx:onFileUpload",
-        message: "upload handler invoked",
-        data: {
-          fileName: file.name,
-          hasWindow: typeof window !== "undefined",
-          cryptoType: typeof crypto,
-          hasRandomUUID: typeof c?.randomUUID === "function",
-          cryptoConstructor: c?.constructor?.name ?? null
-        },
-        timestamp: Date.now()
-      })
-    }).catch(() => {});
-    // #endregion
     setIsScanning(true);
-    const extracted = await generateMockExtractionFromFile(file);
-    setLastImportedFile(file.name);
-    setUploadMessage(
-      "Receipt image loaded. This MVP uses mocked OCR extraction, so please review and edit before saving."
-    );
-    setDraft({
-      id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
-      ...extracted
-    });
-    setIsScanning(false);
-    event.target.value = "";
+    setUploadMessage("");
+    try {
+      const body = new FormData();
+      body.append("file", file);
+      const res = await fetch("/api/receipts", { method: "POST", body });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `Upload failed (${res.status})`);
+      setLastImportedFile(file.name);
+      setUploadMessage("Receipt scanned. Review and edit the extracted rows before saving.");
+      setDraft(data.receipt as ReceiptRecord);
+    } catch (error) {
+      setUploadMessage(error instanceof Error ? error.message : "Upload failed");
+    } finally {
+      setIsScanning(false);
+      input.value = "";
+    }
   }
 
   function openUploadPicker() {
@@ -140,19 +109,6 @@ export function ReceiptDashboardApp() {
 
   function openCameraCapture() {
     cameraInputRef.current?.click();
-  }
-
-  function loadSampleReceipt() {
-    const extracted = generateMockExtraction("sample-grocery-receipt.jpg");
-    setLastImportedFile("sample-grocery-receipt.jpg");
-    setUploadMessage(
-      "Loaded sample receipt. You can edit merchant, items, costs, categories, and necessity before saving."
-    );
-    setDraft({
-      id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
-      ...extracted
-    });
   }
 
   function updateDraftItem(itemId: string, patch: Partial<ReceiptItem>) {
@@ -169,10 +125,35 @@ export function ReceiptDashboardApp() {
     });
   }
 
-  function saveDraft() {
+  async function saveDraft() {
     if (!draft) return;
-    setReceipts((current) => [draft, ...current]);
-    setDraft(null);
+    try {
+      const patch = await fetch(`/api/receipts/${draft.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          merchant: draft.merchant,
+          purchasedAt: draft.purchasedAt,
+          items: draft.items.map(({ name, quantityText, quantityGrams, lineTotalCents, category, necessity }) => ({
+            name,
+            quantityText,
+            quantityGrams,
+            lineTotalCents,
+            category,
+            necessity
+          }))
+        })
+      });
+      if (!patch.ok) throw new Error((await patch.json()).error ?? "Could not save receipt");
+      const approve = await fetch(`/api/receipts/${draft.id}/approve`, { method: "POST" });
+      const data = await approve.json();
+      if (!approve.ok) throw new Error(data.error ?? "Could not approve receipt");
+      setReceipts((current) => [data.receipt as ReceiptRecord, ...current]);
+      setDraft(null);
+      setUploadMessage("Receipt saved.");
+    } catch (error) {
+      setUploadMessage(error instanceof Error ? error.message : "Could not save receipt");
+    }
   }
 
   function downloadCsv() {
@@ -203,7 +184,7 @@ export function ReceiptDashboardApp() {
         <h2>1) Upload receipt image</h2>
         <p className="hint">
           Use Upload for existing images, or Camera to take a new photo on mobile.
-          OCR is mocked in this MVP, so review/edit extracted rows before saving.
+          Review and edit the extracted rows before saving.
         </p>
         <div className="upload-row">
           <button type="button" onClick={openUploadPicker}>
@@ -211,9 +192,6 @@ export function ReceiptDashboardApp() {
           </button>
           <button type="button" onClick={openCameraCapture}>
             Scan with camera
-          </button>
-          <button type="button" onClick={loadSampleReceipt}>
-            Load sample
           </button>
           <button type="button" onClick={downloadCsv} disabled={receipts.length === 0}>
             Export CSV

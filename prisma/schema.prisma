@@ -30,42 +30,53 @@ model Receipt {
   totalCents    Int?
   currency      String        @default("USD")
   confidence    Float?
+  rawText       String?
+  originalName  String?
+  mimeType      String?
+  sizeBytes     Int?
   lineItems     LineItem[]
-  expenses      Expense[]
+  expense       Expense?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
   @@index([userId, purchasedAt])
   @@index([merchantName])
+  @@index([userId, status])
 }
 
 model LineItem {
-  id          String   @id @default(cuid())
-  receiptId   String
-  receipt     Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
-  description String
-  quantity    Float?
-  unitCents   Int?
-  totalCents  Int?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String   @id @default(cuid())
+  receiptId     String
+  receipt       Receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  description   String
+  quantity      Float?
+  unitCents     Int?
+  totalCents    Int?
+  quantityText  String?
+  quantityGrams Int?
+  category      String   @default("other")
+  necessity     String   @default("unknown")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([receiptId])
 }
 
 model Expense {
   id          String    @id @default(cuid())
   userId      String
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  receiptId   String?
+  receiptId   String?   @unique
   receipt     Receipt?  @relation(fields: [receiptId], references: [id], onDelete: SetNull)
   categoryId  String?
   category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   merchant    String
   amountCents Int
   currency    String    @default("USD")
-  spentAt      DateTime
-  notes        String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  spentAt     DateTime
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([userId, spentAt])
   @@index([categoryId])

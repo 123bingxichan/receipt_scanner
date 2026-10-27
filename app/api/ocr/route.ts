@@ -1,73 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getOcrProvider } from "@/lib/ocr";
+import { validateUpload } from "@/lib/receipts/validation";
 
-interface OcrLine {
-  text: string;
-}
+export const runtime = "nodejs";
 
-interface OcrResponse {
-  fullText: string;
-  lines: OcrLine[];
-}
-
+/** Stateless OCR preview: returns text without saving anything. */
 export async function POST(request: NextRequest) {
+  const file = (await request.formData()).get("file");
+  if (!(file instanceof File)) {
+    return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
+  }
+  const invalid = validateUpload(file);
+  if (invalid) return NextResponse.json({ error: invalid }, { status: 400 });
   try {
-    const formData = await request.formData();
-    const file = formData.get("file");
-
-    if (!(file instanceof File)) {
-      return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
-    }
-
-    const ocrForm = new FormData();
-    ocrForm.append("language", "eng");
-    ocrForm.append("isOverlayRequired", "true");
-    ocrForm.append("OCREngine", "2");
-    ocrForm.append("file", file);
-
-    const apiKey = process.env.OCR_SPACE_API_KEY ?? "helloworld";
-
-    const response = await fetch("https://api.ocr.space/parse/image", {
-      method: "POST",
-      headers: {
-        apikey: apiKey
-      },
-      body: ocrForm,
-      cache: "no-store"
+    const fullText = await getOcrProvider().extractText({
+      bytes: Buffer.from(await file.arrayBuffer()),
+      mimeType: file.type,
+      filename: file.name
     });
-
-    if (!response.ok) {
-      return NextResponse.json(
-        { error: `OCR provider request failed with status ${response.status}` },
-        { status: 502 }
-      );
-    }
-
-    const payload = await response.json();
-    const first = payload?.ParsedResults?.[0];
-    const fullText = String(first?.ParsedText ?? "").trim();
-
-    if (!fullText) {
-      return NextResponse.json({ error: "OCR returned no text" }, { status: 422 });
-    }
-
-    const lines: OcrLine[] = fullText
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((text) => ({ text }));
-
-    const result: OcrResponse = {
-      fullText,
-      lines
-    };
-
-    return NextResponse.json(result);
+    const lines = fullText.split(/\r?\n/).map((t) => t.trim()).filter(Boolean).map((text) => ({ text }));
+    return NextResponse.json({ fullText, lines });
   } catch (error) {
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Unexpected OCR error"
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error instanceof Error ? error.message : "OCR failed" }, { status: 502 });
   }
 }

@@ -33,3 +33,7 @@ test-results/
 # system
 .DS_Store
 Thumbs.db
+
+# local uploads
+.uploads/
+tsconfig.tsbuildinfo
