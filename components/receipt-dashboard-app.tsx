@@ -17,6 +17,11 @@ const CATEGORY_OPTIONS: ItemCategory[] = [
 
 const NECESSITY_OPTIONS: NecessityLevel[] = ["necessary", "non_necessary", "unknown"];
 
+/** Parse a JSON body, tolerating empty or non-JSON error responses. */
+async function readJson(res: Response): Promise<{ error?: string; receipt?: ReceiptRecord }> {
+  return res.json().catch(() => ({}));
+}
+
 export function ReceiptDashboardApp() {
   const [receipts, setReceipts] = useState<ReceiptRecord[]>([]);
   const [draft, setDraft] = useState<ReceiptRecord | null>(null);
@@ -90,11 +95,11 @@ export function ReceiptDashboardApp() {
       const body = new FormData();
       body.append("file", file);
       const res = await fetch("/api/receipts", { method: "POST", body });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? `Upload failed (${res.status})`);
+      const data = await readJson(res);
+      if (!res.ok || !data.receipt) throw new Error(data.error ?? `Upload failed (${res.status})`);
       setLastImportedFile(file.name);
       setUploadMessage("Receipt scanned. Review and edit the extracted rows before saving.");
-      setDraft(data.receipt as ReceiptRecord);
+      setDraft(data.receipt);
     } catch (error) {
       setUploadMessage(error instanceof Error ? error.message : "Upload failed");
     } finally {
@@ -144,11 +149,12 @@ export function ReceiptDashboardApp() {
           }))
         })
       });
-      if (!patch.ok) throw new Error((await patch.json()).error ?? "Could not save receipt");
+      if (!patch.ok) throw new Error((await readJson(patch)).error ?? "Could not save receipt");
       const approve = await fetch(`/api/receipts/${draft.id}/approve`, { method: "POST" });
-      const data = await approve.json();
-      if (!approve.ok) throw new Error(data.error ?? "Could not approve receipt");
-      setReceipts((current) => [data.receipt as ReceiptRecord, ...current]);
+      const data = await readJson(approve);
+      if (!approve.ok || !data.receipt) throw new Error(data.error ?? "Could not approve receipt");
+      const saved = data.receipt;
+      setReceipts((current) => [saved, ...current]);
       setDraft(null);
       setUploadMessage("Receipt saved.");
     } catch (error) {

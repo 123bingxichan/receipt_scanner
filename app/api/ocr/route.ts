@@ -6,7 +6,8 @@ export const runtime = "nodejs";
 
 /** Stateless OCR preview: returns text without saving anything. */
 export async function POST(request: NextRequest) {
-  const file = (await request.formData()).get("file");
+  const form = await request.formData().catch(() => null);
+  const file = form?.get("file");
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
   }
