@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { withApiErrors } from "@/lib/api";
 import { deleteReceipt, getReceipt, ReceiptLockedError, updateReceipt } from "@/lib/db/receipts";
 import { getCurrentUserId } from "@/lib/db/user";
 import { toReceiptRecord } from "@/lib/receipts/mapper";
@@ -10,13 +11,13 @@ type Ctx = { params: Promise<{ id: string }> };
 
 const notFound = () => NextResponse.json({ error: "Receipt not found" }, { status: 404 });
 
-export async function GET(_req: NextRequest, { params }: Ctx) {
+export const GET = withApiErrors(async (_req: NextRequest, { params }: Ctx) => {
   const { id } = await params;
   const row = await getReceipt(await getCurrentUserId(), id);
   return row ? NextResponse.json({ receipt: toReceiptRecord(row) }) : notFound();
-}
+});
 
-export async function PATCH(request: NextRequest, { params }: Ctx) {
+export const PATCH = withApiErrors(async (request: NextRequest, { params }: Ctx) => {
   const { id } = await params;
   const parsed = receiptUpdateSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -31,12 +32,12 @@ export async function PATCH(request: NextRequest, { params }: Ctx) {
     }
     throw error;
   }
-}
+});
 
-export async function DELETE(_req: NextRequest, { params }: Ctx) {
+export const DELETE = withApiErrors(async (_req: NextRequest, { params }: Ctx) => {
   const { id } = await params;
   const imageKey = await deleteReceipt(await getCurrentUserId(), id);
   if (!imageKey) return notFound();
   await getStorage().remove(imageKey);
   return new NextResponse(null, { status: 204 });
-}
+});

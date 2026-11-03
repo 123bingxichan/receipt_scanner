@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { withApiErrors } from "@/lib/api";
 import { createReceipt, listReceipts } from "@/lib/db/receipts";
 import { getCurrentUserId } from "@/lib/db/user";
 import { getOcrProvider } from "@/lib/ocr";
@@ -9,7 +10,7 @@ import { getStorage } from "@/lib/storage";
 
 export const runtime = "nodejs";
 
-export async function GET(request: NextRequest) {
+export const GET = withApiErrors(async (request: NextRequest) => {
   const userId = await getCurrentUserId();
   const status = request.nextUrl.searchParams.get("status");
   const rows = await listReceipts(
@@ -17,12 +18,12 @@ export async function GET(request: NextRequest) {
     status === "APPROVED" || status === "NEEDS_REVIEW" ? status : undefined
   );
   return NextResponse.json({ receipts: rows.map(toReceiptRecord) });
-}
+});
 
 /** Upload a receipt image: store it, run OCR, save a NEEDS_REVIEW receipt. */
-export async function POST(request: NextRequest) {
-  const form = await request.formData();
-  const file = form.get("file");
+export const POST = withApiErrors(async (request: NextRequest) => {
+  const form = await request.formData().catch(() => null);
+  const file = form?.get("file");
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
   }
@@ -58,4 +59,4 @@ export async function POST(request: NextRequest) {
     await storage.remove(imageKey);
     throw error;
   }
-}
+});
